@@ -18,8 +18,9 @@
 
 ## 🌍 Используемые upstream (по умолчанию)
 
-- :contentReference[oaicite:0]{index=0}  
-- :contentReference[oaicite:1]{index=1}  
+    "https://dns.quad9.net/dns-query",
+    "https://dns10.quad9.net/dns-query",
+    "https://dns.adguard-dns.com/dns-query"
 
 Вы можете добавить любые DoH-серверы в конфигурацию.
 
