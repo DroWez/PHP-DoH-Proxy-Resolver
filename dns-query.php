@@ -62,6 +62,12 @@ DOMAIN ROUTING
 */
 
 $domain_upstreams = [
+    "copilot.microsoft.com" => [
+        "https://xbox-dns.ru/dns-query",
+    ],
+    "gemini.google.com" => [
+        "https://xbox-dns.ru/dns-query",
+    ],
 ];
 
 /*
@@ -71,7 +77,8 @@ DNS OVERRIDE
 */
 
 $dns_overrides = [
-    "example.com" => "1.2.3.5",
+    "*.example.com" => "1.2.3.5",
+    "example.com" => "1.2.3.4",
 ];
 
 /*
@@ -84,7 +91,7 @@ $filter_lists = [
     "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
 ];
 
-$filter_cache_file = __DIR__."/filters.cache";
+$filter_cache_file = __DIR__."";
 $filter_cache_ttl = 3600;
 
 /*
@@ -101,7 +108,7 @@ SQLITE LOGGING
 =====================================
 */
 
-$sqlite_file = __DIR__."/dns_logs.sqlite";
+$sqlite_file = __DIR__."";
 
 function sqlite_db(){
 
@@ -331,17 +338,58 @@ function parse_dns_qtype($data){
 
 /*
 =====================================
-DOMAIN ROUTING
+DOMAIN ROUTING WITH WILDCARD
 =====================================
 */
 
-function match_domain_upstreams($domain,$domain_upstreams){
+function match_domain_upstreams($domain, $domain_upstreams){
 
-    foreach($domain_upstreams as $zone=>$ups){
+    if(isset($domain_upstreams[$domain])) {
+        return $domain_upstreams[$domain];
+    }
 
-        if($domain==$zone || str_ends_with($domain,".".$zone)){
+    foreach($domain_upstreams as $pattern => $ups){
+        if(strpos($pattern, '*.') === 0){
+            $wildcard_domain = substr($pattern, 2);
 
+            if($domain === $wildcard_domain || str_ends_with($domain, "." . $wildcard_domain)){
+                return $ups;
+            }
+        }
+
+        if(str_ends_with($domain, "." . $pattern)) {
             return $ups;
+        }
+    }
+
+    return null;
+}
+
+/*
+=====================================
+DNS OVERRIDE WITH WILDCARD
+=====================================
+*/
+
+function match_dns_override($domain, $dns_overrides){
+
+    if(isset($dns_overrides[$domain])){
+        return $dns_overrides[$domain];
+    }
+
+    foreach($dns_overrides as $pattern => $ip){
+        if(strpos($pattern, '*.') === 0){
+            $wildcard_domain = substr($pattern, 2);
+
+            if($domain === $wildcard_domain || str_ends_with($domain, "." . $wildcard_domain)){
+                return $ip;
+            }
+        }
+
+        if(strpos($pattern, '.') === 0){
+            if(str_ends_with($domain, $pattern)){
+                return $ip;
+            }
         }
     }
 
@@ -354,29 +402,47 @@ BUILD RESPONSE
 =====================================
 */
 
-function build_dns_response($query,$ip){
+function build_dns_response($query, $ip){
 
-    $id=substr($query,0,2);
+    $id = substr($query, 0, 2);
 
-    $header =
-        $id .
+    $qtype = parse_dns_qtype($query);
+
+    $is_ipv6 = (strpos($ip, ':') !== false);
+
+    if(($qtype === 'AAAA' && !$is_ipv6) || ($qtype === 'A' && $is_ipv6)) {
+        $header = $id .
+            "\x81\x80" .
+            "\x00\x01" .
+            "\x00\x00" .
+            "\x00\x00" .
+            "\x00\x00";
+
+        $question = substr($query, 12);
+        return $header . $question;
+    }
+
+    $header = $id .
         "\x81\x80" .
         "\x00\x01" .
         "\x00\x01" .
         "\x00\x00" .
         "\x00\x00";
 
-    $question = substr($query,12);
+    $question = substr($query, 12);
+
+    $answer_type = $is_ipv6 ? "\x00\x1c" : "\x00\x01";
+    $data_length = $is_ipv6 ? "\x00\x10" : "\x00\x04";
 
     $answer =
-        "\xc0\x0c".
-        "\x00\x01".
-        "\x00\x01".
-        pack("N",60).
-        "\x00\x04".
+        "\xc0\x0c" .
+        $answer_type .
+        "\x00\x01" .
+        pack("N", 60) .
+        $data_length .
         inet_pton($ip);
 
-    return $header.$question.$answer;
+    return $header . $question . $answer;
 }
 
 /*
@@ -441,21 +507,20 @@ if($domain && domain_blocked($domain,$filters)){
 
 /*
 =====================================
-OVERRIDE
+OVERRIDE WITH WILDCARD
 =====================================
 */
 
-if($domain && isset($dns_overrides[$domain])){
+if($domain){
+    $override_ip = match_dns_override($domain, $dns_overrides);
 
-    $duration=round((microtime(true)-$start_time)*1000,2);
-
-    log_dns($domain,$qtype,"override",$duration);
-
-    header("Content-Type: application/dns-message");
-
-    echo build_dns_response($body,$dns_overrides[$domain]);
-
-    exit();
+    if($override_ip !== null){
+        $duration = round((microtime(true)-$start_time)*1000,2);
+        log_dns($domain,$qtype,"override",$duration);
+        header("Content-Type: application/dns-message");
+        echo build_dns_response($body, $override_ip);
+        exit();
+    }
 }
 
 /*
@@ -464,9 +529,9 @@ UPSTREAM
 =====================================
 */
 
-$upstreams=match_domain_upstreams($domain,$domain_upstreams);
+$upstreams = match_domain_upstreams($domain, $domain_upstreams);
 
-if(!$upstreams) $upstreams=$default_upstreams;
+if(!$upstreams) $upstreams = $default_upstreams;
 
 /*
 =====================================
