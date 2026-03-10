@@ -270,7 +270,7 @@ function save_dquery_config($file, $config) {
     }
     $content .= "];\n\n";
     
-    $content .= "\$filter_cache_file = __DIR__.\"". $db_file ."\";\n";
+    $content .= "\$filter_cache_file = __DIR__.\"/dns_logs.sqlite\";\n";
     $content .= "\$filter_cache_ttl = " . $config['filter_cache_ttl'] . ";\n\n";
     
     $content .= "/*\n";
@@ -287,7 +287,7 @@ function save_dquery_config($file, $config) {
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
-    $content .= "\$sqlite_file = __DIR__.\"". $db_file ."\";\n\n";
+    $content .= "\$sqlite_file = __DIR__.\"/dns_logs.sqlite\";\n\n";
     
     $content .= "function sqlite_db(){\n\n";
     $content .= "    global \$sqlite_file, \$anonim;\n\n";
