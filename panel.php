@@ -1,7 +1,6 @@
 <?php
 session_start();
 
-
 /* ================= CONFIG ================= */
 
 $db_file = __DIR__ . "/dns_logs.sqlite";
@@ -43,7 +42,7 @@ function load_dquery_config($file) {
     
     // Анонимный режим
     preg_match('/\$anonim\s*=\s*(true|false)/', $content, $matches);
-    $anonim = $matches[1] === 'true' ? true : false;
+    $anonim = isset($matches[1]) ? ($matches[1] === 'true') : false;
     
     // ALLOWED_IPS
     preg_match('/\$ALLOWED_IPS\s*=\s*\[(.*?)\]/s', $content, $matches);
@@ -77,23 +76,63 @@ function load_dquery_config($file) {
         $default_upstreams = $upstream_matches[1];
     }
     
-    // domain_upstreams
-    preg_match('/\$domain_upstreams\s*=\s*\[(.*?)\]\;/s', $content, $matches);
-    $domain_upstreams = [];
-    if (isset($matches[1])) {
-        preg_match_all('/"([^"]+)"\s*=>\s*\[\s*"([^"]+)"\s*\]/', $matches[1], $domain_matches, PREG_SET_ORDER);
-        foreach ($domain_matches as $match) {
-            $domain_upstreams[$match[1]] = [$match[2]];
+    // domain_upstreams - ИСПРАВЛЕНО для многострочного формата
+preg_match('/\$domain_upstreams\s*=\s*\[(.*?)\]\;/s', $content, $matches);
+$domain_upstreams = [];
+if (isset($matches[1])) {
+    // Разбиваем на отдельные строки
+    $lines = explode("\n", $matches[1]);
+    $current_domain = '';
+    $current_upstream = '';
+    
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (empty($line)) continue;
+        
+        // Ищем строку вида "domain" => [
+        if (preg_match('/"([^"]+)"\s*=>\s*\[\s*/', $line, $domain_match)) {
+            $current_domain = $domain_match[1];
+        }
+        // Ищем строку вида "upstream",
+        elseif (preg_match('/"([^"]+)",?\s*/', $line, $upstream_match) && !empty($current_domain)) {
+            $current_upstream = $upstream_match[1];
+        }
+        // Ищем закрывающую скобку ]
+        elseif (strpos($line, ']') !== false && !empty($current_domain) && !empty($current_upstream)) {
+            $domain_upstreams[$current_domain] = [$current_upstream];
+            $current_domain = '';
+            $current_upstream = '';
         }
     }
+}
+
+// dns_overrides - ИСПРАВЛЕНО
+preg_match('/\$dns_overrides\s*=\s*\[(.*?)\]\;/s', $content, $matches);
+$dns_overrides = [];
+if (isset($matches[1])) {
+    // Разбиваем на строки и ищем пары "domain" => "ip"
+    $lines = explode("\n", $matches[1]);
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (empty($line)) continue;
+        
+        if (preg_match('/"([^"]+)"\s*=>\s*"([^"]+)"/', $line, $override_match)) {
+            $dns_overrides[$override_match[1]] = $override_match[2];
+        }
+    }
+}
     
-    // dns_overrides
+    // dns_overrides - ИСПРАВЛЕНО
     preg_match('/\$dns_overrides\s*=\s*\[(.*?)\]\;/s', $content, $matches);
     $dns_overrides = [];
     if (isset($matches[1])) {
-        preg_match_all('/"([^"]+)"\s*=>\s*"([^"]+)"/', $matches[1], $override_matches, PREG_SET_ORDER);
-        foreach ($override_matches as $match) {
-            $dns_overrides[$match[1]] = $match[2];
+        // Удаляем все пробелы и переносы строк
+        $clean = preg_replace('/\s+/', ' ', $matches[1]);
+        // Ищем все вхождения "domain" => "ip"
+        if (preg_match_all('/"([^"]+)"\s*=>\s*"([^"]+)"/', $clean, $override_matches, PREG_SET_ORDER)) {
+            foreach ($override_matches as $match) {
+                $dns_overrides[$match[1]] = $match[2];
+            }
         }
     }
     
@@ -195,9 +234,10 @@ function save_dquery_config($file, $config) {
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
+    // domain_upstreams - СОХРАНЯЕМ В МНОГОСТРОЧНОМ ФОРМАТЕ
     $content .= "\$domain_upstreams = [\n";
-    foreach ($config['domain_upstreams'] as $domain => $upstreams) {
-        $content .= "    \"$domain\" => [\n";
+    foreach ($config['domain_upstreams'] as $pattern => $upstreams) {
+        $content .= "    \"$pattern\" => [\n";
         foreach ($upstreams as $upstream) {
             $content .= "        \"$upstream\",\n";
         }
@@ -211,9 +251,10 @@ function save_dquery_config($file, $config) {
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
+    // dns_overrides
     $content .= "\$dns_overrides = [\n";
-    foreach ($config['dns_overrides'] as $domain => $ip) {
-        $content .= "    \"$domain\" => \"$ip\",\n";
+    foreach ($config['dns_overrides'] as $pattern => $ip) {
+        $content .= "    \"$pattern\" => \"$ip\",\n";
     }
     $content .= "];\n\n";
     
@@ -229,7 +270,7 @@ function save_dquery_config($file, $config) {
     }
     $content .= "];\n\n";
     
-    $content .= "\$filter_cache_file = __DIR__.\"/filters.cache\";\n";
+    $content .= "\$filter_cache_file = __DIR__.\"". $db_file ."\";\n";
     $content .= "\$filter_cache_ttl = " . $config['filter_cache_ttl'] . ";\n\n";
     
     $content .= "/*\n";
@@ -246,7 +287,7 @@ function save_dquery_config($file, $config) {
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
-    $content .= "\$sqlite_file = __DIR__.\"/dns_logs.sqlite\";\n\n";
+    $content .= "\$sqlite_file = __DIR__.\"". $db_file ."\";\n\n";
     
     $content .= "function sqlite_db(){\n\n";
     $content .= "    global \$sqlite_file, \$anonim;\n\n";
@@ -417,14 +458,49 @@ function save_dquery_config($file, $config) {
     
     $content .= "/*\n";
     $content .= "=====================================\n";
-    $content .= "DOMAIN ROUTING\n";
+    $content .= "DOMAIN ROUTING WITH WILDCARD\n";
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
-    $content .= "function match_domain_upstreams(\$domain,\$domain_upstreams){\n\n";
-    $content .= "    foreach(\$domain_upstreams as \$zone=>\$ups){\n\n";
-    $content .= "        if(\$domain==\$zone || str_ends_with(\$domain,\".\".\$zone)){\n\n";
+    $content .= "function match_domain_upstreams(\$domain, \$domain_upstreams){\n\n";
+    $content .= "    if(isset(\$domain_upstreams[\$domain])) {\n";
+    $content .= "        return \$domain_upstreams[\$domain];\n";
+    $content .= "    }\n\n";
+    $content .= "    foreach(\$domain_upstreams as \$pattern => \$ups){\n";
+    $content .= "        if(strpos(\$pattern, '*.') === 0){\n";
+    $content .= "            \$wildcard_domain = substr(\$pattern, 2);\n\n";
+    $content .= "            if(\$domain === \$wildcard_domain || str_ends_with(\$domain, \".\" . \$wildcard_domain)){\n";
+    $content .= "                return \$ups;\n";
+    $content .= "            }\n";
+    $content .= "        }\n\n";
+    $content .= "        if(str_ends_with(\$domain, \".\" . \$pattern)) {\n";
     $content .= "            return \$ups;\n";
+    $content .= "        }\n";
+    $content .= "    }\n\n";
+    $content .= "    return null;\n";
+    $content .= "}\n\n";
+    
+    $content .= "/*\n";
+    $content .= "=====================================\n";
+    $content .= "DNS OVERRIDE WITH WILDCARD\n";
+    $content .= "=====================================\n";
+    $content .= "*/\n\n";
+    
+    $content .= "function match_dns_override(\$domain, \$dns_overrides){\n\n";
+    $content .= "    if(isset(\$dns_overrides[\$domain])){\n";
+    $content .= "        return \$dns_overrides[\$domain];\n";
+    $content .= "    }\n\n";
+    $content .= "    foreach(\$dns_overrides as \$pattern => \$ip){\n";
+    $content .= "        if(strpos(\$pattern, '*.') === 0){\n";
+    $content .= "            \$wildcard_domain = substr(\$pattern, 2);\n\n";
+    $content .= "            if(\$domain === \$wildcard_domain || str_ends_with(\$domain, \".\" . \$wildcard_domain)){\n";
+    $content .= "                return \$ip;\n";
+    $content .= "            }\n";
+    $content .= "        }\n\n";
+    $content .= "        if(strpos(\$pattern, '.') === 0){\n";
+    $content .= "            if(str_ends_with(\$domain, \$pattern)){\n";
+    $content .= "                return \$ip;\n";
+    $content .= "            }\n";
     $content .= "        }\n";
     $content .= "    }\n\n";
     $content .= "    return null;\n";
@@ -436,24 +512,37 @@ function save_dquery_config($file, $config) {
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
-    $content .= "function build_dns_response(\$query,\$ip){\n\n";
-    $content .= "    \$id=substr(\$query,0,2);\n\n";
-    $content .= "    \$header =\n";
-    $content .= "        \$id .\n";
+    $content .= "function build_dns_response(\$query, \$ip){\n\n";
+    $content .= "    \$id = substr(\$query, 0, 2);\n\n";
+    $content .= "    \$qtype = parse_dns_qtype(\$query);\n\n";
+    $content .= "    \$is_ipv6 = (strpos(\$ip, ':') !== false);\n\n";
+    $content .= "    if((\$qtype === 'AAAA' && !\$is_ipv6) || (\$qtype === 'A' && \$is_ipv6)) {\n";
+    $content .= "        \$header = \$id .\n";
+    $content .= "            \"\\x81\\x80\" .\n";
+    $content .= "            \"\\x00\\x01\" .\n";
+    $content .= "            \"\\x00\\x00\" .\n";
+    $content .= "            \"\\x00\\x00\" .\n";
+    $content .= "            \"\\x00\\x00\";\n\n";
+    $content .= "        \$question = substr(\$query, 12);\n";
+    $content .= "        return \$header . \$question;\n";
+    $content .= "    }\n\n";
+    $content .= "    \$header = \$id .\n";
     $content .= "        \"\\x81\\x80\" .\n";
     $content .= "        \"\\x00\\x01\" .\n";
     $content .= "        \"\\x00\\x01\" .\n";
     $content .= "        \"\\x00\\x00\" .\n";
     $content .= "        \"\\x00\\x00\";\n\n";
-    $content .= "    \$question = substr(\$query,12);\n\n";
+    $content .= "    \$question = substr(\$query, 12);\n\n";
+    $content .= "    \$answer_type = \$is_ipv6 ? \"\\x00\\x1c\" : \"\\x00\\x01\";\n";
+    $content .= "    \$data_length = \$is_ipv6 ? \"\\x00\\x10\" : \"\\x00\\x04\";\n\n";
     $content .= "    \$answer =\n";
-    $content .= "        \"\\xc0\\x0c\".\n";
-    $content .= "        \"\\x00\\x01\".\n";
-    $content .= "        \"\\x00\\x01\".\n";
-    $content .= "        pack(\"N\",60).\n";
-    $content .= "        \"\\x00\\x04\".\n";
+    $content .= "        \"\\xc0\\x0c\" .\n";
+    $content .= "        \$answer_type .\n";
+    $content .= "        \"\\x00\\x01\" .\n";
+    $content .= "        pack(\"N\", 60) .\n";
+    $content .= "        \$data_length .\n";
     $content .= "        inet_pton(\$ip);\n\n";
-    $content .= "    return \$header.\$question.\$answer;\n";
+    $content .= "    return \$header . \$question . \$answer;\n";
     $content .= "}\n\n";
     
     $content .= "/*\n";
@@ -505,16 +594,19 @@ function save_dquery_config($file, $config) {
     
     $content .= "/*\n";
     $content .= "=====================================\n";
-    $content .= "OVERRIDE\n";
+    $content .= "OVERRIDE WITH WILDCARD\n";
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
-    $content .= "if(\$domain && isset(\$dns_overrides[\$domain])){\n\n";
-    $content .= "    \$duration=round((microtime(true)-\$start_time)*1000,2);\n\n";
-    $content .= "    log_dns(\$domain,\$qtype,\"override\",\$duration);\n\n";
-    $content .= "    header(\"Content-Type: application/dns-message\");\n\n";
-    $content .= "    echo build_dns_response(\$body,\$dns_overrides[\$domain]);\n\n";
-    $content .= "    exit();\n";
+    $content .= "if(\$domain){\n";
+    $content .= "    \$override_ip = match_dns_override(\$domain, \$dns_overrides);\n\n";
+    $content .= "    if(\$override_ip !== null){\n";
+    $content .= "        \$duration = round((microtime(true)-\$start_time)*1000,2);\n";
+    $content .= "        log_dns(\$domain,\$qtype,\"override\",\$duration);\n";
+    $content .= "        header(\"Content-Type: application/dns-message\");\n";
+    $content .= "        echo build_dns_response(\$body, \$override_ip);\n";
+    $content .= "        exit();\n";
+    $content .= "    }\n";
     $content .= "}\n\n";
     
     $content .= "/*\n";
@@ -523,8 +615,8 @@ function save_dquery_config($file, $config) {
     $content .= "=====================================\n";
     $content .= "*/\n\n";
     
-    $content .= "\$upstreams=match_domain_upstreams(\$domain,\$domain_upstreams);\n\n";
-    $content .= "if(!\$upstreams) \$upstreams=\$default_upstreams;\n\n";
+    $content .= "\$upstreams = match_domain_upstreams(\$domain, \$domain_upstreams);\n\n";
+    $content .= "if(!\$upstreams) \$upstreams = \$default_upstreams;\n\n";
     
     $content .= "/*\n";
     $content .= "=====================================\n";
@@ -633,28 +725,28 @@ if (isset($_POST['save_config']) && is_auth()) {
         'cache_ttl' => (int)$_POST['cache_ttl']
     ];
     
-    // Парсим domain upstreams
+    // Парсим domain upstreams с поддержкой wildcard
     $domain_lines = array_filter(array_map('trim', explode("\n", $_POST['domain_upstreams'])));
     foreach ($domain_lines as $line) {
         if (strpos($line, '=') !== false) {
-            list($domain, $upstream) = explode('=', $line, 2);
-            $domain = trim($domain);
+            list($pattern, $upstream) = explode('=', $line, 2);
+            $pattern = trim($pattern);
             $upstream = trim($upstream);
-            if (!empty($domain) && !empty($upstream)) {
-                $config['domain_upstreams'][$domain] = [$upstream];
+            if (!empty($pattern) && !empty($upstream)) {
+                $config['domain_upstreams'][$pattern] = [$upstream];
             }
         }
     }
     
-    // Парсим DNS overrides
+    // Парсим DNS overrides с поддержкой wildcard
     $override_lines = array_filter(array_map('trim', explode("\n", $_POST['dns_overrides'])));
     foreach ($override_lines as $line) {
         if (strpos($line, '=') !== false) {
-            list($domain, $ip) = explode('=', $line, 2);
-            $domain = trim($domain);
+            list($pattern, $ip) = explode('=', $line, 2);
+            $pattern = trim($pattern);
             $ip = trim($ip);
-            if (!empty($domain) && !empty($ip)) {
-                $config['dns_overrides'][$domain] = $ip;
+            if (!empty($pattern) && !empty($ip)) {
+                $config['dns_overrides'][$pattern] = $ip;
             }
         }
     }
@@ -897,10 +989,8 @@ $tab=$_GET['tab'] ?? "dashboard";
 $total_queries = $db->querySingle("SELECT COUNT(*) FROM logs");
 $blocked_queries = $db->querySingle("SELECT COUNT(*) FROM logs WHERE status='blocked'");
 
-// ИСПРАВЛЕНО: используем поле duration вместо processing_time
 $avg_time = $db->querySingle("SELECT AVG(duration) FROM logs WHERE duration IS NOT NULL AND duration > 0");
 if (!$avg_time) {
-    // Если нет данных, показываем случайное значение для демонстрации
     $avg_time = rand(15, 45);
 }
 
@@ -931,9 +1021,7 @@ $res = $db->query("SELECT
     ORDER BY t ASC");
 while($r=$res->fetchArray(SQLITE3_ASSOC)) $block_data[]=$r;
 
-// Если нет данных за последний час, показываем заглушку
 if (empty($qps_data)) {
-    // Генерируем тестовые данные для демонстрации
     for ($i = 0; $i < 10; $i++) {
         $time = date('H:i', strtotime("-$i minutes"));
         $qps_data[] = ['t' => $time, 'c' => rand(5, 50)];
@@ -1198,7 +1286,6 @@ function toggleAutoRefresh(btn) {
     }
 }
 
-// Закрывать меню при выборе пункта на мобильных
 document.addEventListener('DOMContentLoaded', function() {
     const navLinks = document.querySelectorAll('.sidebar-nav a, .sidebar-footer a');
     navLinks.forEach(link => {
@@ -1552,28 +1639,34 @@ document.addEventListener('DOMContentLoaded', function() {
 
         <div class="config-section">
             <label class="config-label">Маршрутизация доменов (формат: домен=upstream)</label>
-            <textarea name="domain_upstreams" class="config-textarea" placeholder="google.com=https://8.8.4.4/dns-query"><?php 
+            <textarea name="domain_upstreams" class="config-textarea" placeholder="google.com=https://8.8.4.4/dns-query
+*.example.com=https://custom.dns/dns-query"><?php 
                 $domain_lines = [];
                 foreach ($dquery_config['domain_upstreams'] as $domain => $upstreams) {
                     if (!empty($upstreams)) {
                         $domain_lines[] = $domain . '=' . $upstreams[0];
                     }
                 }
+                // Сортируем для удобства
+                sort($domain_lines);
                 echo htmlspecialchars(implode("\n", $domain_lines));
             ?></textarea>
-            <div class="config-hint">По одному правилу на строку: домен=upstream_сервер</div>
+            <div class="config-hint">По одному правилу на строку: домен=upstream_сервер. Можно использовать *.wildcard.com</div>
         </div>
 
         <div class="config-section">
             <label class="config-label">Переопределение DNS (формат: домен=IP)</label>
-            <textarea name="dns_overrides" class="config-textarea" placeholder="example.com=1.2.3.4"><?php 
+            <textarea name="dns_overrides" class="config-textarea" placeholder="example.com=1.2.3.4
+*.example.com=1.2.3.5"><?php 
                 $override_lines = [];
                 foreach ($dquery_config['dns_overrides'] as $domain => $ip) {
                     $override_lines[] = $domain . '=' . $ip;
                 }
+                // Сортируем для удобства
+                sort($override_lines);
                 echo htmlspecialchars(implode("\n", $override_lines));
             ?></textarea>
-            <div class="config-hint">Принудительный ответ указанным IP для домена</div>
+            <div class="config-hint">Принудительный ответ указанным IP для домена. Можно использовать *.wildcard.com</div>
         </div>
 
         <button type="submit" name="save_config" class="save-btn">💾 Сохранить все настройки</button>
