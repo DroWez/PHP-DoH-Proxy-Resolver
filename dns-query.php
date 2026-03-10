@@ -91,7 +91,7 @@ $filter_lists = [
     "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
 ];
 
-$filter_cache_file = __DIR__."";
+$filter_cache_file = __DIR__."/dns_logs.sqlite";
 $filter_cache_ttl = 3600;
 
 /*
@@ -108,7 +108,7 @@ SQLITE LOGGING
 =====================================
 */
 
-$sqlite_file = __DIR__."";
+$sqlite_file = __DIR__."/dns_logs.sqlite";
 
 function sqlite_db(){
 
