@@ -270,7 +270,7 @@ function save_dquery_config($file, $config) {
     }
     $content .= "];\n\n";
     
-    $content .= "\$filter_cache_file = __DIR__.\"/dns_logs.sqlite\";\n";
+    $content .= "\$filter_cache_file = __DIR__.\"/dnsfilter.cache\";\n";
     $content .= "\$filter_cache_ttl = " . $config['filter_cache_ttl'] . ";\n\n";
     
     $content .= "/*\n";
