@@ -62,11 +62,23 @@ DOMAIN ROUTING
 */
 
 $domain_upstreams = [
+    "*.ozon.ru" => [
+        "https://common.dot.dns.yandex.net/dns-query",
+    ],
+    "*.ozone.ru" => [
+        "https://common.dot.dns.yandex.net/dns-query",
+    ],
     "copilot.microsoft.com" => [
         "https://xbox-dns.ru/dns-query",
     ],
     "gemini.google.com" => [
         "https://xbox-dns.ru/dns-query",
+    ],
+    "ozon.ru" => [
+        "https://common.dot.dns.yandex.net/dns-query",
+    ],
+    "ozone.ru" => [
+        "https://common.dot.dns.yandex.net/dns-query",
     ],
 ];
 
@@ -91,7 +103,7 @@ $filter_lists = [
     "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
 ];
 
-$filter_cache_file = __DIR__."/dns_logs.sqlite";
+$filter_cache_file = __DIR__."/dnsfilter.cache";
 $filter_cache_ttl = 3600;
 
 /*
